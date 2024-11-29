@@ -1,4 +1,4 @@
-"""Timesketch integration with S3 and Sigma rules.
+"""Timesketch integration with S3, Sigma rules, and additional features.
 
 Authentication method: API Token
 
@@ -95,6 +95,29 @@ class TimesketchClient:
         else:
             raise ValueError("Invalid Sigma rule operation or missing parameters.")
 
+    def run_saved_search_by_name(self, sketch_id: int, search_name: str) -> List[dict]:
+        sketch = self._client.get_sketch(sketch_id)
+        saved_searches = sketch.list_saved_searches()
+
+        # Find the saved search by name
+        saved_search = next(
+            (search for search in saved_searches if search.name == search_name), None
+        )
+        if not saved_search:
+            raise ValueError(f"Saved search with name '{search_name}' not found.")
+
+        result = saved_search.query.run()
+        return [entry.to_dict() for entry in result]
+
+    def tag_event(
+        self, sketch_id: int, timeline_id: int, event_id: str, tags: List[str]
+    ) -> dict:
+        sketch = self._client.get_sketch(sketch_id)
+        event = sketch.get_event(timeline_id, event_id)
+        event.add_tags(tags)
+        event.commit()
+        return {"event_id": event_id, "tags": tags}
+
 
 async def fetch_data_from_s3(s3_url: str) -> List[dict]:
     """Fetch data from S3 bucket."""
@@ -125,51 +148,36 @@ def create_timesketch_client() -> TimesketchClient:
 
 
 @registry.register(
-    default_title="Search Timesketch Timeline",
-    description="Search for events in a Timesketch timeline",
+    default_title="Run Saved Search by Name",
+    description="Run a saved search by name in Timesketch",
     display_group="Timesketch",
     namespace="integrations.timesketch",
     secrets=[timesketch_secret],
 )
-def search_timesketch_timeline(
+def run_saved_search_by_name(
     sketch_id: Annotated[int, Field(..., description="Sketch ID")],
-    query: Annotated[
-        str, Field(..., description="Query string for searching in Timesketch")
-    ],
-    query_filter: Annotated[
-        Optional[dict], Field(None, description="Query filter (optional)")
-    ] = None,
+    search_name: Annotated[str, Field(..., description="Saved search name")],
 ) -> List[dict[str, Any]]:
     client = create_timesketch_client()
-    results = client.search_timeline(sketch_id=sketch_id, query=query, query_filter=query_filter)
+    results = client.run_saved_search_by_name(sketch_id=sketch_id, search_name=search_name)
     return results
 
 
 @registry.register(
-    default_title="Manage Sigma Rules",
-    description="Perform CRUD operations and search on Sigma rules in Timesketch",
+    default_title="Tag an Event",
+    description="Add tags to an event in Timesketch",
     display_group="Timesketch",
     namespace="integrations.timesketch",
     secrets=[timesketch_secret],
 )
-def manage_sigma_rules(
+def tag_event_in_timesketch(
     sketch_id: Annotated[int, Field(..., description="Sketch ID")],
-    action: Annotated[
-        str,
-        Field(..., description="Action to perform: 'list', 'get', 'create', or 'delete'"),
-    ],
-    rule_id: Annotated[
-        Optional[int], Field(None, description="Sigma rule ID (required for 'get' or 'delete')")
-    ] = None,
-    rule_content: Annotated[
-        Optional[dict],
-        Field(None, description="Sigma rule content (required for 'create')"),
-    ] = None,
-) -> Any:
+    timeline_id: Annotated[int, Field(..., description="Timeline ID")],
+    event_id: Annotated[str, Field(..., description="Event ID")],
+    tags: Annotated[List[str], Field(..., description="List of tags to add")],
+) -> dict[str, Any]:
     client = create_timesketch_client()
-    result = client.manage_sigma_rule(
-        sketch_id=sketch_id, action=action, rule_id=rule_id, rule_content=rule_content
-    )
+    result = client.tag_event(sketch_id=sketch_id, timeline_id=timeline_id, event_id=event_id, tags=tags)
     return result
 
 
